@@ -27,8 +27,6 @@ import java.util.concurrent.TimeUnit;
 public class NameNodeExecutor extends AbstractNodeExecutor {
   public static final Log log = LogFactory.getLog(NameNodeExecutor.class);
 
-  private LiveState liveState;
-
   private Task nameNodeTask;
   private Task zkfcNodeTask;
   private Task journalNodeTask;
@@ -98,9 +96,18 @@ public class NameNodeExecutor extends AbstractNodeExecutor {
   public void frameworkMessage(ExecutorDriver driver, byte[] msg) {
     log.info("Executor received framework message of length: " + msg.length + " bytes");
     String messageStr = new String(msg);
-    // launch tasks on init (primary NN), launch tasks on run (secondary NN)
-    if (messageStr.equals(HDFSConstants.NAME_NODE_INIT_MESSAGE)
-        || messageStr.equals(HDFSConstants.NAME_NODE_RUN_MESSAGE)) {
+    // Initialize primary name node
+    if (messageStr.equals(HDFSConstants.NAME_NODE_INIT_MESSAGE)) {
+      Timer timer = new Timer(true);
+      TimerTask waitForJournalNodes = new JNPortCheckTask(
+          driver,
+          liveState.getJournalNodeDomainNames(),
+          HDFSConstants.JOURNAL_NODE_LISTEN_PORT,
+          "bin/hdfs-mesos-namenode " + messageStr);
+      timer.scheduleAtFixedRate(waitForJournalNodes, 0, 15000);
+    }
+    // Initialize all secondary name nodes
+    if (messageStr.equals(HDFSConstants.NAME_NODE_RUN_MESSAGE)) {
       // Initialize the journal node and name node
       // Start the name node
       driver.sendStatusUpdate(TaskStatus.newBuilder()
@@ -113,15 +120,7 @@ public class NameNodeExecutor extends AbstractNodeExecutor {
           .setState(TaskState.TASK_RUNNING)
           .build());
     }
-    if (messageStr.equals(HDFSConstants.NAME_NODE_INIT_MESSAGE)) {
-      Timer timer = new Timer(true);
-      TimerTask waitForJournalNodes = new JNPortCheckTask(
-          driver,
-          liveState.getJournalNodeDomainNames(),
-          HDFSConstants.JOURNAL_NODE_LISTEN_PORT,
-          "bin/hdfs-mesos-namenode " + messageStr);
-      timer.scheduleAtFixedRate(waitForJournalNodes, 0, 15000);
-    }
+    // Bootstrap all secondary name nodes after primary name nodes are a-go
     if (messageStr.equals(HDFSConstants.NAME_NODE_BOOTSTRAP_MESSAGE)) {
       Timer timer = new Timer(true);
       TimerTask waitForNameNodes = new NNDnsCheckTask(
@@ -163,6 +162,15 @@ public class NameNodeExecutor extends AbstractNodeExecutor {
         runCommand(driver, nameNodeTask, message);
         startProcess(driver, nameNodeTask);
         startProcess(driver, zkfcNodeTask);
+        driver.sendStatusUpdate(TaskStatus.newBuilder()
+            .setTaskId(nameNodeTask.taskInfo.getTaskId())
+            .setState(TaskState.TASK_RUNNING)
+            .build());
+        // Start the zkfc node
+        driver.sendStatusUpdate(TaskStatus.newBuilder()
+            .setTaskId(zkfcNodeTask.taskInfo.getTaskId())
+            .setState(TaskState.TASK_RUNNING)
+            .build());
         this.cancel();
       }
     }

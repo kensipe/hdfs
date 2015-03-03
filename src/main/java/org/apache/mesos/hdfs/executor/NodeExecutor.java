@@ -27,8 +27,8 @@ import java.util.TimerTask;
  **/
 public class NodeExecutor extends AbstractNodeExecutor {
   public static final Log log = LogFactory.getLog(NodeExecutor.class);
-  private Task task;
 
+  private Task task;
   private Task dataNodeTask;
 
   /**
